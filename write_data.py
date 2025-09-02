@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     for unit_line in unit_lines:
         for unit_id in unit_lines[:-1]:
-            statement = "MATCH (u1: )"
+            statement = "MATCH (u1:Unit {})"
 
 
     # for civ in civilizations:
