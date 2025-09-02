@@ -31,9 +31,17 @@ if __name__ == "__main__":
 
     with open(data_path+"unitlines.json", "r") as infile:
         unit_lines = json.load(infile)
+    unit_lines = unit_lines["UnitLines"]
     
     statements = []
-    
+    for unit_category in unit_categories.keys():
+        for unit in unit_categories[unit_category]:
+            statement = "CREATE (:Unit {name: " + unit["Name"] + ", id: " + str(unit["ID"]) + ", category: "+ unit_category + "})"
+
+    for unit_line in unit_lines:
+        for unit_id in unit_lines[:-1]:
+            statement = "MATCH (u1: )"
+
 
     # for civ in civilizations:
     #     logger.info(msg=f"Reading Civ {civ} from document")
