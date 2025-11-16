@@ -119,66 +119,52 @@ if __name__ == "__main__":
         for unit_or_research in civ["civ_techs_units"]:
             unit_or_research_node_id = unit_or_research["Node ID"]
             node_type = unit_or_research["Node Type"]
+            if node_type == "Unit" or node_type == "UnitUpgrade" or node_type == "UniqueUnit" or node_type == "RegionalUnit" or node_type == "BuildingNonTech" or node_type == "UniqueBuilding":
+                # Create node no matter what to check connections
+                unit_or_research_node = Unit(
+                    age_id = unit_or_research["Age ID"],
+                    building_id = unit_or_research["Building ID"],
+                    name = unit_or_research["Name"],
+                    node_id = unit_or_research["Node ID"],
+                    node_type = unit_or_research["Node Type"]
+                )
+                creation_node_type = "Unit"
+                relation_type = "HAS_UNIT"
+            elif node_type == "Research":
+                unit_or_research_node = Research(
+                    age_id = unit_or_research["Age ID"],
+                    building_id = unit_or_research["Building ID"],
+                    name = unit_or_research["Name"],
+                    node_id = unit_or_research["Node ID"]
+                )
+                creation_node_type = "Research"
+                relation_type = "HAS_RESEARCH"
+            else:
+                raise ValueError(f"Unhandled Node Type encountered: {node_type} in object: {unit_or_research}")
             if unit_or_research_node_id not in unit_or_research_node_ids:
+                # Create the node if it does not exist
                 unit_or_research_node_ids.append(unit_or_research_node_id)
-                if node_type == "Unit" or node_type == "UnitUpgrade" or node_type == "UniqueUnit" or node_type == "RegionalUnit" or node_type == "BuildingNonTech" or node_type == "UniqueBuilding":
-                    unit_node = Unit(
-                        age_id = unit_or_research["Age ID"],
-                        building_id = unit_or_research["Building ID"],
-                        name = unit_or_research["Name"],
-                        node_id = unit_or_research["Node ID"],
-                        node_type = unit_or_research["Node Type"]
-                    )
-                    statements.append((get_write_statement_from_node("Unit", unit_node), unit_node.model_dump()))
-                    statements.append(
-                                            ("MATCH " +
-                                            "(u:Unit {node_id: $node_id}), " +
-                                            "(b:Building {building_id: $building_id}) " +
-                                            "MERGE (u)-[r:CREATED_AT]->(b)",
-                                            {"node_id": unit_or_research_node_id, "building_id": unit_node.building_id}
-                                            )
+                statements.append((get_write_statement_from_node(creation_node_type, unit_or_research_node), unit_or_research_node.model_dump()))
+                statements.append(
+                                        (f"MATCH (n:{creation_node_type} " +
+                                        "{node_id: $node_id}), " +
+                                        "(b:Building {building_id: $building_id}) " +
+                                        "MERGE (n)-[r:COMES_FROM]->(b)",
+                                        {"node_id": unit_or_research_node_id, "building_id": unit_or_research_node.building_id}
                                         )
-                    if unit_or_research["Node Status"] != "NotAvailable" and unit_or_research_node_id not in connections:
-                        statements.append(
-                                            ("MATCH " +
-                                            "(civ:Civ {name: $name}), " +
-                                            "(unit:Unit {node_id: $node_id}) " +
-                                            "MERGE (civ)-[r:HAS_UNIT]->(unit)",
-                                            {"name": civ_name, "node_id": unit_or_research_node_id}
-                                            )
-                                        )
-                        connections.append(unit_or_research_node_id)
-                elif node_type == "Research":
-                    # TODO merge the code for research and units
-                    research_node = Research(
-                        age_id = unit_or_research["Age ID"],
-                        building_id = unit_or_research["Building ID"],
-                        name = unit_or_research["Name"],
-                        node_id = unit_or_research["Node ID"]
-                    )
-                    statements.append((get_write_statement_from_node("Research", research_node), research_node.model_dump()))
-                    statements.append(
-                                            ("MATCH " +
-                                            "(research:Research {node_id: $node_id}), " +
-                                            "(b:Building {building_id: $building_id}) " +
-                                            "MERGE (research)-[r:RESEARCHED_AT]->(b)",
-                                            {"node_id": unit_or_research_node_id, "building_id": research_node.building_id}
-                                            )
-                                        )
-                    if unit_or_research["Node Status"] != "NotAvailable" and unit_or_research_node_id not in connections:
-                        statements.append(
-                                        
-                                            ("MATCH " +
-                                            "(civ:Civ {name: $name}), " +
-                                            "(research:Research {node_id: $node_id}) " +
-                                            "MERGE (civ)-[r:HAS_RESEARCH]->(research)",
-                                            {"name": civ_name, "node_id": unit_or_research_node_id}
-                                            )
-                                        )
-                        connections.append(unit_or_research_node_id)
-                else:
-                    raise ValueError(f"Unhandled Node Type encountered: {node_type} in object: {unit_or_research}")
-
+                                    )
+            if unit_or_research["Node Status"] != "NotAvailable" and unit_or_research_node_id not in connections:
+                # Create the connection if the civ has the node and it does not exist
+                statements.append(
+                                    ("MATCH " +
+                                    "(civ:Civ {name: $name}), " +
+                                    f"(n:{creation_node_type} " +
+                                    "{node_id: $node_id}) " +
+                                    f"MERGE (civ)-[r:{relation_type}]->(n)",
+                                    {"name": civ_name, "node_type": creation_node_type, "node_id": unit_or_research_node_id}
+                                    )
+                                )
+                connections.append(unit_or_research_node_id)
     
     for unit_category in unit_categories.keys():
         if unit_category not in unit_category_names:
