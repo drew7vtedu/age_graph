@@ -192,9 +192,42 @@ if __name__ == "__main__":
                                 )
                 connections.append(node_id)
 
-    # for unit_line in unit_lines:
-    #     for unit_id in unit_lines[:-1]:
-    #         statement = "MATCH (u1:Unit {})"
+    for unit_line in unit_lines:
+        unit_line_node = UnitLine(
+            name=unit_line["Name"],
+            building=unit_line["Building"] if "Building" in unit_line.keys() else False,
+            line_id=unit_line["LineID"],
+            id_chain=unit_line["IDChain"]
+        )
+        # TODO check for existing connections?
+        if unit_line_node.line_id not in unit_line_ids:
+            # Create unit line
+            unit_line_ids.append(unit_line_node.line_id)
+            statements.append((get_write_statement_from_node("UnitLine", unit_line_node), unit_line_node.model_dump()))
+        for idx, line_member in enumerate(unit_line_node.id_chain):
+            # Create connections with unit line members
+            statements.append(
+                    ("MATCH " +
+                    f"(unit_line:UnitLine "
+                    "{line_id: $line_id}), " +
+                    f"(unit:{'Building' if unit_line_node.building else 'Unit'} "
+                    "{node_id: $unit_id})" +
+                    "MERGE (unit_line)-[r:HAS_MEMBER]->(unit)",
+                    {"line_id": unit_line_node.line_id, "unit_id": line_member}
+                    )
+            )
+            if idx != len(unit_line_node.id_chain) - 1:
+                # Create connections between line id members
+                statements.append(
+                    ("MATCH " +
+                    f"(unit:{'Building' if unit_line_node.building else 'Unit'} "
+                    "{node_id: $base_unit}), " +
+                    f"(unitUpgrade:{'Building' if unit_line_node.building else 'Unit'} "
+                    "{node_id: $upgrade_unit})" +
+                    "MERGE (unit)-[r:HAS_UPGRADE]->(unitUpgrade)",
+                    {"base_unit": line_member, "upgrade_unit": unit_line_node.id_chain[idx+1]}
+                    )
+            )
 
     with driver.session(database=DATABASE).begin_transaction() as tx:
         try:
