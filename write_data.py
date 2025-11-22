@@ -1,3 +1,4 @@
+from classes.node_factory import NodeFactory
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -7,6 +8,7 @@ import json
 import logging
 from pydantic import BaseModel
 import pdb
+import pandas as pd
 
 from classes.building import Building
 from classes.civ import Civ
@@ -27,13 +29,19 @@ driver.verify_connectivity()
 
 logger = logging.Logger("logger")
 
-def get_write_statement_from_node(node_type: str, node: BaseModel) -> str:
-    properties = node.model_dump()
-    props_list = [f"{key}: ${key}" for key in properties.keys()]
-    props_string = ", ".join(props_list)
-    
-    query = f"CREATE (n:{node_type} {{{props_string}}})"
-    return query
+
+"""
+EDGE CASES TO INVESTIGATE
+horse collar has comes_from links to both farm and mill
+harbor and dock connection
+multiple serjeant, tarkan and elite tarkan nodes
+types of duplicates:
+    unit which can be created at multiple buildings
+        different node ids
+    Elite Kipchak exists as both a unique unit and a unit upgrade
+        same node_type
+
+"""
 
 if __name__ == "__main__":
 
@@ -66,10 +74,15 @@ if __name__ == "__main__":
         result_transformer_=lambda x: x.value(),
         database_=DATABASE
     )
-    unit_or_research_node_ids = driver.execute_query(
-        "MATCH (n) "
-        "WHERE n:Unit OR n:Research "
-        "RETURN n.node_id",
+    unit_node_ids = driver.execute_query(
+        "MATCH (u:Unit) "
+        "RETURN u.node_id",
+        result_transformer_=lambda x: x.value(),
+        database_=DATABASE
+    )
+    research_node_ids = driver.execute_query(
+        "MATCH (r:Research) "
+        "RETURN r.node_id",
         result_transformer_=lambda x: x.value(),
         database_=DATABASE
     )
@@ -85,6 +98,13 @@ if __name__ == "__main__":
         result_transformer_=lambda x: x.value(),
         database_=DATABASE
     )
+    factory = NodeFactory(
+        civ_names,
+        building_node_ids, 
+        unit_node_ids, 
+        research_node_ids, 
+        unit_category_names, 
+        unit_line_ids)
     for civ in civ_tech_trees:
         # Each civ has building and unit arrays, unit array also contains research
         civ_name = civ["civ_id"]
@@ -97,19 +117,14 @@ if __name__ == "__main__":
         )
         if civ_name not in civ_names:
             civ_names.append(civ_name)
-            civ_node = Civ(name=civ_name)
-            statements.append((get_write_statement_from_node("Civ", civ_node), civ_node.model_dump()))
+            civ_node = factory.create_node({"civ_id": civ_name, "Node Type": "Civ"})  # add node type so create_node can parse it
+            statements.append((factory.get_write_statement_from_node("Civ", civ_node), civ_node.model_dump()))
         for building in civ["civ_techs_buildings"]:
             building_node_id = building["Node ID"]
             if building_node_id not in building_node_ids:
                 building_node_ids.append(building_node_id)
-                building_node = Building(
-                    age_id = building["Age ID"],
-                    building_id = building["Building ID"],
-                    name = building["Name"],
-                    node_id = building_node_id
-                )
-                statements.append((get_write_statement_from_node("Building", building_node), building_node.model_dump()))
+                building_node = factory.create_node(building)
+                statements.append((factory.get_write_statement_from_node("Building", building_node), building_node.model_dump()))
             if building["Node Status"] != "NotAvailable" and building_node_id not in connections:
                 statements.append(
                                     ("MATCH (civ:Civ {name: $name}), (building:Building {node_id: $node_id}) " +
@@ -119,32 +134,26 @@ if __name__ == "__main__":
         for unit_or_research in civ["civ_techs_units"]:
             unit_or_research_node_id = unit_or_research["Node ID"]
             node_type = unit_or_research["Node Type"]
-            if node_type == "Unit" or node_type == "UnitUpgrade" or node_type == "UniqueUnit" or node_type == "RegionalUnit" or node_type == "BuildingNonTech" or node_type == "UniqueBuilding":
-                # Create node no matter what to check connections
-                unit_or_research_node = Unit(
-                    age_id = unit_or_research["Age ID"],
-                    building_id = unit_or_research["Building ID"],
-                    name = unit_or_research["Name"],
-                    node_id = unit_or_research["Node ID"],
-                    node_type = unit_or_research["Node Type"]
-                )
+            # Create node no matter what to check connections
+            unit_or_research_node = factory.create_node(unit_or_research)
+            if isinstance(unit_or_research_node, Unit):
                 creation_node_type = "Unit"
                 relation_type = "HAS_UNIT"
-            elif node_type == "Research":
-                unit_or_research_node = Research(
-                    age_id = unit_or_research["Age ID"],
-                    building_id = unit_or_research["Building ID"],
-                    name = unit_or_research["Name"],
-                    node_id = unit_or_research["Node ID"]
-                )
+                node_is_created = False
+                if unit_or_research_node_id in unit_node_ids:
+                    node_is_created = True
+                else:
+                    unit_node_ids.append(unit_or_research_node_id)
+            elif isinstance(unit_or_research_node, Research):
                 creation_node_type = "Research"
                 relation_type = "HAS_RESEARCH"
-            else:
-                raise ValueError(f"Unhandled Node Type encountered: {node_type} in object: {unit_or_research}")
-            if unit_or_research_node_id not in unit_or_research_node_ids:
-                # Create the node if it does not exist
-                unit_or_research_node_ids.append(unit_or_research_node_id)
-                statements.append((get_write_statement_from_node(creation_node_type, unit_or_research_node), unit_or_research_node.model_dump()))
+                node_is_created = False
+                if unit_or_research_node_id in research_node_ids:
+                    node_is_created = True
+                else:
+                    research_node_ids.append(unit_or_research_node_id)
+            if not node_is_created:
+                statements.append((factory.get_write_statement_from_node(creation_node_type, unit_or_research_node), unit_or_research_node.model_dump()))
                 statements.append(
                                         (f"MATCH (n:{creation_node_type} " +
                                         "{node_id: $node_id}), " +
@@ -172,7 +181,7 @@ if __name__ == "__main__":
             unit_category_node = UnitCategory(
                 name = unit_category
             )
-            statements.append((get_write_statement_from_node("UnitCategory", unit_category_node), unit_category_node.model_dump()))
+            statements.append((factory.get_write_statement_from_node("UnitCategory", unit_category_node), unit_category_node.model_dump()))
         connections = driver.execute_query(
             f"MATCH (u:Unit) -[r]->(uc:UnitCategory {{name: \"{unit_category}\"}}) "
             "RETURN u.node_id",
@@ -203,7 +212,7 @@ if __name__ == "__main__":
         if unit_line_node.line_id not in unit_line_ids:
             # Create unit line
             unit_line_ids.append(unit_line_node.line_id)
-            statements.append((get_write_statement_from_node("UnitLine", unit_line_node), unit_line_node.model_dump()))
+            statements.append((factory.get_write_statement_from_node("UnitLine", unit_line_node), unit_line_node.model_dump()))
         for idx, line_member in enumerate(unit_line_node.id_chain):
             # Create connections with unit line members
             statements.append(
