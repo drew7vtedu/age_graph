@@ -5,6 +5,7 @@ from .unit_category import UnitCategory
 from .unit import Unit
 
 from pydantic import BaseModel
+import pandas as pd
 
 
 class NodeFactory:
@@ -12,14 +13,14 @@ class NodeFactory:
     def __init__(self, 
                 civ_names: list[str], 
                 building_node_ids: list[int], 
-                unit_node_ids: list[int],
-                research_node_ids: list[int],
+                unit_building_connections: pd.DataFrame,
+                research_building_connections: pd.DataFrame,
                 unit_category_names: list[str],
                 unit_line_ids: list[int]) -> None:
         self.civ_names = civ_names
         self.building_node_ids = building_node_ids
-        self.unit_node_ids = unit_node_ids
-        self.research_node_ids = research_node_ids
+        self.unit_building_connections = unit_building_connections
+        self.research_building_connections = research_building_connections
         self.unit_category_names = unit_category_names
         self.unit_line_ids = unit_line_ids
 

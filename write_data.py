@@ -74,17 +74,23 @@ if __name__ == "__main__":
         result_transformer_=lambda x: x.value(),
         database_=DATABASE
     )
-    unit_node_ids = driver.execute_query(
-        "MATCH (u:Unit) "
-        "RETURN u.node_id",
-        result_transformer_=lambda x: x.value(),
+    unit_building_connections = driver.execute_query(
+        "MATCH (u:Unit) -[cf:COMES_FROM]-> (b:Building)"
+        "RETURN u.name AS u_name, cf, b.node_id AS b_id",
         database_=DATABASE
     )
-    research_node_ids = driver.execute_query(
-        "MATCH (r:Research) "
-        "RETURN r.node_id",
-        result_transformer_=lambda x: x.value(),
+    unit_building_connections = pd.DataFrame(
+        unit_building_connections.records,
+        columns=unit_building_connections.keys
+    )
+    research_building_connections = driver.execute_query(
+        "MATCH (r:Research) -[cf:COMES_FROM]-> (b:Building)"
+        "RETURN r.name AS r_name, cf, b.node_id AS b_id",
         database_=DATABASE
+    )
+    research_building_connections = pd.DataFrame(
+        research_building_connections.records,
+        columns=research_building_connections.keys
     )
     unit_category_names = driver.execute_query(
         "MATCH (n:UnitCategory) "
@@ -101,8 +107,8 @@ if __name__ == "__main__":
     factory = NodeFactory(
         civ_names,
         building_node_ids, 
-        unit_node_ids, 
-        research_node_ids, 
+        unit_building_connections, 
+        research_building_connections, 
         unit_category_names, 
         unit_line_ids)
     for civ in civ_tech_trees:
@@ -139,27 +145,30 @@ if __name__ == "__main__":
             if isinstance(unit_or_research_node, Unit):
                 creation_node_type = "Unit"
                 relation_type = "HAS_UNIT"
-                node_is_created = False
-                if unit_or_research_node_id in unit_node_ids:
-                    node_is_created = True
-                else:
-                    unit_node_ids.append(unit_or_research_node_id)
+                filtered_connections = unit_building_connections.loc[unit_building_connections["u_name"] == unit_or_research_node.name]
+                node_is_created = not filtered_connections.empty
+                connection_is_created = unit_or_research_node.building_id in filtered_connections["b_id"].values
+                if not connection_is_created:
+                    new_row_df = pd.DataFrame({"u_name": unit_or_research_node.name, "cf": "()", "b_id": unit_or_research_node.building_id}, index=[0])
+                    unit_building_connections = pd.concat([unit_building_connections, new_row_df], ignore_index=True)
             elif isinstance(unit_or_research_node, Research):
                 creation_node_type = "Research"
                 relation_type = "HAS_RESEARCH"
-                node_is_created = False
-                if unit_or_research_node_id in research_node_ids:
-                    node_is_created = True
-                else:
-                    research_node_ids.append(unit_or_research_node_id)
+                filtered_connections = research_building_connections.loc[research_building_connections["r_name"] == unit_or_research_node_id]
+                node_is_created = not filtered_connections.empty
+                connection_is_created = unit_or_research_node_id in filtered_connections["b_id"].values
+                if not connection_is_created:
+                    new_row_df = pd.DataFrame({"r_name": unit_or_research_node_id, "cf": "()", "b_id": unit_or_research_node.building_id}, index=[0])
+                    research_building_connections = pd.concat([research_building_connections, new_row_df], ignore_index=True)
             if not node_is_created:
                 statements.append((factory.get_write_statement_from_node(creation_node_type, unit_or_research_node), unit_or_research_node.model_dump()))
+            if not connection_is_created:
                 statements.append(
                                         (f"MATCH (n:{creation_node_type} " +
-                                        "{node_id: $node_id}), " +
+                                        "{name: $node_name}), " +
                                         "(b:Building {building_id: $building_id}) " +
                                         "MERGE (n)-[r:COMES_FROM]->(b)",
-                                        {"node_id": unit_or_research_node_id, "building_id": unit_or_research_node.building_id}
+                                        {"node_name": unit_or_research_node.name, "building_id": unit_or_research_node.building_id}
                                         )
                                     )
             if unit_or_research["Node Status"] != "NotAvailable" and unit_or_research_node_id not in connections:
@@ -173,7 +182,6 @@ if __name__ == "__main__":
                                     {"name": civ_name, "node_type": creation_node_type, "node_id": unit_or_research_node_id}
                                     )
                                 )
-                connections.append(unit_or_research_node_id)
     
     for unit_category in unit_categories.keys():
         if unit_category not in unit_category_names:
